@@ -6,12 +6,31 @@ https://kkroening.github.io/ffmpeg-python/index.html
 https://ffmpeg.org/ffmpeg-filters.html#atrim
 """
 
+import os
 import sys
 sys.path.append('c:\\Users\\abarc\\Desktop\\andrei\\projects\\Python\\local\\sponsorblock.py')
 import ffmpeg
+import logging
+import assemblyai as aai
+from google import genai
+from googleapiclient.discovery import build
 import sponsorblock as sb
-from pytube import YouTube
+from pytubefix import YouTube
 from typing import List, Tuple
+
+
+def setup_logging(arg_folder, filename, console=False, filemode='w+'):
+    """Set up logging to a logfile and optionally to the console also, if console param is True."""
+    if not os.path.exists(arg_folder): os.makedirs(arg_folder, exist_ok=True)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)  # track INFO logging events (default was WARNING)
+    root_logger.handlers = []  # clear handlers
+    root_logger.addHandler(logging.FileHandler(os.path.join(arg_folder, filename), filemode))  # handler to log to file
+    root_logger.handlers[0].setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))  # log level and message
+
+    if console:
+        root_logger.addHandler(logging.StreamHandler(sys.stdout))  # handler to log to console
+        root_logger.handlers[1].setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
 
 
 def get_sponsorship_segments(link: str) -> List[Tuple[float, float]]:
@@ -56,8 +75,8 @@ def get_sponsorship_segments(link: str) -> List[Tuple[float, float]]:
     return sponsorships_timeframes
 
 
-def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float]) -> bytes:
-    """Returns a byte literal of the sponsorship audio from the YouTube video, specified by the timeframe using Pytube and ffmpeg.
+def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float]) -> str:
+    """Returns the temporary filepath of the sponsorship audio from the YouTube video, specified by the timeframe using Pytube and ffmpeg.
 
     Args:
       link (str):
@@ -66,8 +85,8 @@ def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float])
         tuple of the start and stop times of the sponsorship segment.
     
     Returns:
-      audio (bytes):
-        bytes literal of the audio segment.
+      temp_filename (string):
+        the temporarily saved path to wav file containing the sponsorship segment.
     """
 
     yt = YouTube(link) # pytube
@@ -90,25 +109,96 @@ def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float])
         .run(capture_stdout=True))
 
     if not err:
-        # # Write the audio buffer to file for testing
-        # with open('audio.wav', 'wb') as f:
-        #     f.write(audio)
-        return audio
+        temp_filename = 'temp_audio.wav'
+        # Write the audio buffer to file temporarily
+        with open(temp_filename, 'wb') as f:
+            f.write(audio)
 
+        return temp_filename
+    
 
-if __name__ == "__main__":
-    # initialise sponsorblock client.
-    client = sb.Client()
-
-    # youtube video link in text format.
-    # yt_link = "https://www.youtube.com/watch?v=2pV8t-n8m8c" # thomas delauer
-    yt_link = "https://www.youtube.com/watch?v=Y9N4ylzIbDM" # how history works (duplicate sponsorship segments test).
-
+def get_sponsorships_from_video(yt_link: str) -> None:
     sponsorships_timeframes = get_sponsorship_segments(yt_link)
 
     # extract the audio from the sponsorship segments.
     if sponsorships_timeframes:
         # process each sponsorship segment in this video.
         for sponsorship_timeframe in sponsorships_timeframes:
-            audio = get_sponsorship_audio(yt_link, sponsorship_timeframe)
-            b=1
+            audio_filepath = get_sponsorship_audio(yt_link, sponsorship_timeframe)
+
+            # transcribe sponsorship.
+            transcript = transcriber.transcribe(audio_filepath)
+
+            if transcript.status == aai.TranscriptStatus.error:
+                print(f"Transcription failed: {transcript.error}")
+                exit(1)
+            
+            txt = transcript.text
+
+            # get the sponsorship gist using PaLM.
+
+            # define the user prompt message.
+            prompt = "Summarise what product the following advertisement from a YouTube video is about: " + txt
+            # create a chatbot and complete the prompt request.
+            response = gclient.models.generate_content(model="gemini-2.0-flash", contents=prompt).text
+            logging.info(f"The youtube video {yt_link} has the following sponsorship segment: {response}")
+
+            # remove the temporarily created audio file of the sponsorship segment.
+            os.remove('temp_audio.wav')
+
+
+if __name__ == "__main__":
+    # initialise sponsorblock client.
+    client = sb.Client()
+
+    # sign up at https://aistudio.google.com/app/apikey to get API key.
+    # create a PALM_API_KEY environment variable.
+    gclient = genai.Client(api_key=os.environ['PALM_API_KEY'])
+
+    # sign up at assemblyai.com to get API key.
+    # create a ASSEMBLYAI_API_KEY environment variable.
+    aai.settings.api_key = os.environ['ASSEMBLYAI_API_KEY']
+    transcriber = aai.Transcriber()
+
+    # set up connectivity to YouTube API, follow tutorial https://www.youtube.com/watch?v=TIZRskDMyA4.
+    youtube = build(
+        'youtube', 
+        'v3',
+        developerKey=os.environ['YOUTUBE_API_KEY']
+    )
+
+    # set up logging to both log file and console.
+    setup_logging(os.getcwd(), 'ads.log', console=True, filemode='w')
+    
+    channel_handle = '@ThomasDeLauerOfficial'  # the YouTube channel's handle.
+    most_recent = 5  # the number of most recent videos to check for ads.
+
+    # Get the ''most_recent' amount of most recent videos for the channel specified by its handle.
+    channel_request = youtube.channels().list(
+        part="snippet,contentDetails,statistics",
+        forHandle=channel_handle
+    )
+    channel_response = channel_request.execute()
+    uploads_playlist_id = channel_response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+    # fetch the 'most_recent' amount of most recent videos from the uploads playlist.
+    playlist_request = youtube.playlistItems().list(
+        part="snippet",
+        playlistId=uploads_playlist_id,
+        maxResults=most_recent
+    )
+    playlist_response = playlist_request.execute()
+
+    # create a tuple of (title,URL) for the most recent videos.
+    yt_links = []
+    for item in playlist_response["items"]:
+        video_id = item["snippet"]["resourceId"]["videoId"]
+        title = item["snippet"]["title"]
+        yt_links.append((title, f"https://www.youtube.com/watch?v={video_id}"))
+
+    # loop through the videos.
+    for v in yt_links:
+        get_sponsorships_from_video(v[1])
+
+    
+            
