@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1>Select Channel By Handle</h1>
+    <form id="channelForm" action="/" method="post" novalidate>
+        {{ form.hidden_tag() }}
+        <p>
+            {{ form.handle.label }}<br>
+            {{ form.handle(size=32) }}
+            {% for error in form.handle.errors %}
+            <span style="color: red;">[{{ error }}]</span>
+            {% endfor %}
+        </p>
+        <p>
+            {{ form.num_vids.label }}<br>
+            {{ form.num_vids(size=32) }}
+            {% for error in form.num_vids.errors %}
+            <span style="color: red;">[{{ error }}]</span>
+            {% endfor %}
+        </p>
+        <p>{{ form.submit(id="submitBtn") }}</p>
+    </form>
+    <div id="loadingIcon" style="display: none;">
+        <img src="{{ url_for('static', filename='loading.gif') }}" alt="Loading...">
+    </div>
+    <script>
+        document.getElementById('channelForm').addEventListener('submit', function(e) {
+            document.getElementById('submitBtn').style.display = 'none';
+            document.getElementById('loadingIcon').style.display = 'block';
+        });
+    </script>
+{% endblock %}

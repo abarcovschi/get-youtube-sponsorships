@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sponsors</title>
+</head>
+<body>
+    <h1>Sponsorship Results</h1>
+    <hr>
+    {% for data_item in data %}
+        <h2>Video: <a href="{{ data_item['url'] }}" target="_blank">{{ data_item['url'] }}</a></h2>
+        {% if 'sponsorships' not in data_item or not data_item['sponsorships'] %}
+            <p>No sponsorships found for this video</p>
+        {% else %}
+            <h3>Sponsorship Segments:</h3>
+            <ul>
+                {% for sponsorship in data_item['sponsorships'] %}
+                    <li>{{ sponsorship }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+        <p>This video was posted {{ data_item['time_ago'] }}</p>
+        <hr>
+    {% endfor %}
+</body>
+{% endblock %}

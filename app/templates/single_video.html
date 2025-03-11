@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1>Get Sponsorships of a Single Video</h1>
+    <form id="videoForm" action="" method="post" novalidate>
+        {{ form.hidden_tag() }}
+        <p>
+            {{ form.url.label }}<br>
+            {{ form.url(size=32) }}
+            {% for error in form.url.errors %}
+            <span style="color: red;">[{{ error }}]</span>
+            {% endfor %}
+        </p>
+        <p>{{ form.submit(id="submitBtn") }}</p>
+    </form>
+    <div id="loadingIcon" style="display: none;">
+        <img src="{{ url_for('static', filename='loading.gif') }}" alt="Loading...">
+    </div>
+    <script>
+        document.getElementById('videoForm').addEventListener('submit', function(e) {
+            document.getElementById('submitBtn').style.display = 'none';
+            document.getElementById('loadingIcon').style.display = 'block';
+        });
+    </script>
+{% endblock %}

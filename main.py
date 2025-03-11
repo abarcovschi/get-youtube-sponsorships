@@ -8,32 +8,55 @@ https://ffmpeg.org/ffmpeg-filters.html#atrim
 
 import os
 import sys
+
 sys.path.append('c:\\Users\\abarc\\Desktop\\andrei\\projects\\Python\\local\\sponsorblock.py')
+
 import ffmpeg
-import logging
+import asyncio
+from googleapiclient.discovery import build, Resource
 import assemblyai as aai
 from google import genai
-from googleapiclient.discovery import build
 import sponsorblock as sb
 from pytubefix import YouTube
-from typing import List, Tuple
+from dateutil.parser import isoparse
+from typing import List, Tuple, Union
+from datetime import datetime, timezone
 
 
-def setup_logging(arg_folder, filename, console=False, filemode='w+'):
-    """Set up logging to a logfile and optionally to the console also, if console param is True."""
-    if not os.path.exists(arg_folder): os.makedirs(arg_folder, exist_ok=True)
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)  # track INFO logging events (default was WARNING)
-    root_logger.handlers = []  # clear handlers
-    root_logger.addHandler(logging.FileHandler(os.path.join(arg_folder, filename), filemode))  # handler to log to file
-    root_logger.handlers[0].setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))  # log level and message
-
-    if console:
-        root_logger.addHandler(logging.StreamHandler(sys.stdout))  # handler to log to console
-        root_logger.handlers[1].setFormatter(logging.Formatter('%(levelname)s:%(asctime)s: %(message)s'))
+def get_or_create_event_loop():
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError as ex:
+        if "There is no current event loop in thread" in str(ex):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+        else:
+            raise ex
 
 
-def get_sponsorship_segments(link: str) -> List[Tuple[float, float]]:
+def time_ago(iso_timestamp):
+    # Convert ISO 8601 string to datetime object
+    published_time = isoparse(iso_timestamp).replace(tzinfo=timezone.utc)
+    
+    # Get current time in UTC
+    now = datetime.now(timezone.utc)
+    
+    # Calculate time difference
+    diff = now - published_time
+    
+    # Convert to human-readable format
+    if diff.days > 0:
+        return f"{diff.days} days ago"
+    elif diff.seconds >= 3600:
+        return f"{diff.seconds // 3600} hours ago"
+    elif diff.seconds >= 60:
+        return f"{diff.seconds // 60} minutes ago"
+    else:
+        return "Just now"
+
+
+def get_sponsorship_segments(sbclient: sb.Client, link: str) -> List[Tuple[float, float]]:
     """Returns a list of tuples of start and stop times of sponsorship segments in a YouTube video extracted using Sponsorblock API.
 
     Args:
@@ -46,31 +69,36 @@ def get_sponsorship_segments(link: str) -> List[Tuple[float, float]]:
     """
 
     # get the sponsorship(s) timeframes in seconds.
-    segments = client.get_skip_segments(link)
-    # each item is a tuple of sponsorship start time and stop time in seconds.
-    # keep only sponsorship segments the sponsorblock community flagged as skippable and get the times of those segments.
-    sponsorships_timeframes = list(map(lambda sponsor_segment: sponsor_segment.data['segment'], 
-            filter(lambda segment: segment.action_type == 'skip', segments)))
-    # Sometimes the same segment is listed more than once but with slight time offsets,
-    #  filter out these duplicates, keeping only unique segments, 
-    #  merging a segment if one segment is part of a longer segment.
-    tolerance = 2.0 # upper limit for the gap (sec) between segments' start or stop times.
+    try:
+        segments = sbclient.get_skip_segments(link)
+        # each item is a tuple of sponsorship start time and stop time in seconds.
+        # keep only sponsorship segments the sponsorblock community flagged as skippable and get the times of those segments.
+        sponsorships_timeframes = list(map(lambda sponsor_segment: sponsor_segment.data['segment'], 
+                filter(lambda segment: segment.action_type == 'skip', segments)))
+        # Sometimes the same segment is listed more than once but with slight time offsets,
+        #  filter out these duplicates, keeping only unique segments, 
+        #  merging a segment if one segment is part of a longer segment.
+        tolerance = 2.0 # upper limit for the gap (sec) between segments' start or stop times.
 
-    def get_unique_sponsorships(timeframes_list, tolerance):
-        for i in range(0, len(timeframes_list)-1):
-            timeframe1 = timeframes_list[i] # tuple of (start_time, stop_time).
-            timeframe2 = timeframes_list[i+1]
-            # check if two timeframes correspond to the same sponsorship.
-            if abs(timeframe1[0] - timeframe2[0]) < tolerance:
-                # timegap between the start times is less than 'tolerance' seconds.
-                # segments correspond to the same sponsorship promotion, but one may have an incorrect shorter timeframe.
-                # keep the longer stop time and combine the segments into one (start time unchanged as it is the same).
-                    timeframes_list[i][1] = max(timeframe1[1], timeframe2[1]) # replace (i)'th tuple's stop time with the largest of the two.
-                    del timeframes_list[i+1] # delete (i+1)'st tuple.
-                    return True
-        return False
+        def get_unique_sponsorships(timeframes_list, tolerance):
+            for i in range(0, len(timeframes_list)-1):
+                timeframe1 = timeframes_list[i] # tuple of (start_time, stop_time).
+                timeframe2 = timeframes_list[i+1]
+                # check if two timeframes correspond to the same sponsorship.
+                if abs(timeframe1[0] - timeframe2[0]) < tolerance:
+                    # timegap between the start times is less than 'tolerance' seconds.
+                    # segments correspond to the same sponsorship promotion, but one may have an incorrect shorter timeframe.
+                    # keep the longer stop time and combine the segments into one (start time unchanged as it is the same).
+                        timeframes_list[i][1] = max(timeframe1[1], timeframe2[1]) # replace (i)'th tuple's stop time with the largest of the two.
+                        del timeframes_list[i+1] # delete (i+1)'st tuple.
+                        return True
+            return False
 
-    while get_unique_sponsorships(sponsorships_timeframes, tolerance): pass
+        while get_unique_sponsorships(sponsorships_timeframes, tolerance): pass
+
+    except sb.errors.NotFoundException:
+        print(f"No sponsorship segments were found for the video {link}")
+        sponsorships_timeframes = []
 
     return sponsorships_timeframes
 
@@ -117,11 +145,12 @@ def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float])
         return temp_filename
     
 
-def get_sponsorships_from_video(yt_link: str) -> None:
-    sponsorships_timeframes = get_sponsorship_segments(yt_link)
+def get_sponsorships_from_video(sbclient: sb.Client, gclient: genai.Client, transcriber: aai.Transcriber, yt_link: str) -> str:
+    sponsorships_timeframes = get_sponsorship_segments(sbclient, yt_link)
 
     # extract the audio from the sponsorship segments.
     if sponsorships_timeframes:
+        sponsorships = []
         # process each sponsorship segment in this video.
         for sponsorship_timeframe in sponsorships_timeframes:
             audio_filepath = get_sponsorship_audio(yt_link, sponsorship_timeframe)
@@ -138,18 +167,22 @@ def get_sponsorships_from_video(yt_link: str) -> None:
             # get the sponsorship gist using PaLM.
 
             # define the user prompt message.
-            prompt = "Summarise what product the following advertisement from a YouTube video is about: " + txt
+            prompt = "Summarise what product the following advertisement from a YouTube video is about and let the user know if there are any promotions like discounts on mentioned products: " + txt
             # create a chatbot and complete the prompt request.
             response = gclient.models.generate_content(model="gemini-2.0-flash", contents=prompt).text
-            logging.info(f"The youtube video {yt_link} has the following sponsorship segment: {response}")
-
+            sponsorships.append(response)
             # remove the temporarily created audio file of the sponsorship segment.
             os.remove('temp_audio.wav')
 
+        return sponsorships
+    
 
-if __name__ == "__main__":
+def setup() -> Union[sb.Client, genai.Client, aai.Transcriber, Resource]:
     # initialise sponsorblock client.
-    client = sb.Client()
+    sbclient = sb.Client()
+
+     # Ensure an event loop exists before initializing the client
+    get_or_create_event_loop()
 
     # sign up at https://aistudio.google.com/app/apikey to get API key.
     # create a PALM_API_KEY environment variable.
@@ -161,44 +194,104 @@ if __name__ == "__main__":
     transcriber = aai.Transcriber()
 
     # set up connectivity to YouTube API, follow tutorial https://www.youtube.com/watch?v=TIZRskDMyA4.
-    youtube = build(
+    yt = build(
         'youtube', 
         'v3',
         developerKey=os.environ['YOUTUBE_API_KEY']
     )
+    return sbclient, gclient, transcriber, yt
 
-    # set up logging to both log file and console.
-    setup_logging(os.getcwd(), 'ads.log', console=True, filemode='w')
-    
-    channel_handle = '@ThomasDeLauerOfficial'  # the YouTube channel's handle.
-    most_recent = 5  # the number of most recent videos to check for ads.
 
-    # Get the ''most_recent' amount of most recent videos for the channel specified by its handle.
-    channel_request = youtube.channels().list(
+def by_channel(channel_handle: str, num_videos: int = 3) -> List[dict]:
+    """Returns the sponsorships integrated in the YouTube videos of channel specified by its handle along with the number of most recent videos to check.
+
+    Returns:
+        List[
+            dict{
+                'url': YouTube video URL.
+                'sponsorships': List[str]
+                'time_ago': str
+            }
+        ]
+    """
+    sbclient, gclient, transcriber, yt = setup()
+
+    # Get the 'num_videos' amount of most recent videos for the channel specified by its handle.
+    channel_request = yt.channels().list(
         part="snippet,contentDetails,statistics",
         forHandle=channel_handle
     )
+
     channel_response = channel_request.execute()
+
+    if not channel_response.get('items'):
+        print(f"ERROR: No such channel handle.")
+        return []
     uploads_playlist_id = channel_response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
-    # fetch the 'most_recent' amount of most recent videos from the uploads playlist.
-    playlist_request = youtube.playlistItems().list(
+    # fetch the 'num_videos' amount of most recent videos from the uploads playlist.
+    playlist_request = yt.playlistItems().list(
         part="snippet",
         playlistId=uploads_playlist_id,
-        maxResults=most_recent
+        maxResults=num_videos
     )
-    playlist_response = playlist_request.execute()
+    try:
+        playlist_response = playlist_request.execute()
+    except Exception:
+        print(f"ERROR: Number of videos specified is less than 1.")
+        return []
 
-    # create a tuple of (title,URL) for the most recent videos.
-    yt_links = []
+    sponsorss = list()
+    # loop through the most recent videos.
     for item in playlist_response["items"]:
         video_id = item["snippet"]["resourceId"]["videoId"]
         title = item["snippet"]["title"]
-        yt_links.append((title, f"https://www.youtube.com/watch?v={video_id}"))
+        published_at = item["snippet"]["publishedAt"]  # time of publishing.
+        # get sponsorships.
+        sponsorships = get_sponsorships_from_video(sbclient, gclient, transcriber, f"https://www.youtube.com/watch?v={video_id}")
+        sponsors = dict()
+        sponsors['url'] = f"https://www.youtube.com/watch?v={video_id}"
+        if sponsorships:
+            sponsors['sponsorships'] = list()
+            for sponsorship in sponsorships:
+                sponsors['sponsorships'].append(sponsorship)
+        sponsors['time_ago'] = time_ago(published_at)
+        sponsorss.append(sponsors)
+    
+    return sponsorss
 
-    # loop through the videos.
-    for v in yt_links:
-        get_sponsorships_from_video(v[1])
+
+def by_video(yt_link: str) -> dict:
+    """Returns the sponsorships integrated in the YouTube video specified by the link in the argument.
+
+    Returns:
+        dict{
+            'url': YouTube video URL.
+            'sponsorships': List[str]
+        }
+    """
+
+    sbclient, gclient, transcriber, _ = setup()
+    # get sponsorships.
+    sponsorships = get_sponsorships_from_video(sbclient, gclient, transcriber, yt_link)
+    sponsors = dict()
+    sponsors['url'] = yt_link
+    if sponsorships:
+        sponsors['sponsorships'] = list()
+        for sponsorship in sponsorships:
+            sponsors['sponsorships'].append(sponsorship)
+
+    return sponsors
+
+
+if __name__ == "__main__":
+    b = by_video("https://www.youtube.com/watch?v=2e31eEkII8U")
+    # b = by_channel("Insider", -1)
+    a=1
+
+    
+
+    
 
     
             
