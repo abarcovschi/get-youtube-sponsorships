@@ -11,7 +11,7 @@
             <span style="color: red;">[{{ error }}]</span>
             {% endfor %}
         </p>
-        <p>{{ form.submit(id="submitBtn") }}</p>
+        <p>{{ form.submit(class_="btn btn-primary", id="submitBtn") }}</p>
     </form>
     <div id="loadingIcon" style="display: none;">
         <img src="{{ url_for('static', filename='loading.gif') }}" alt="Loading...">
