@@ -1,4 +1,4 @@
-from app import app
+from web_main import app
 from flask import render_template, request, session
 from app.forms import MultipleVideosForm, SingleVideoForm
 from flask import render_template, flash, redirect, url_for

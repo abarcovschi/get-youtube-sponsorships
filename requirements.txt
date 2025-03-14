@@ -1,0 +1,12 @@
+flask
+flask_wtf
+google-api-python-client
+assemblyai
+google-generativeai
+google-genai
+ffmpeg-python
+sponsorblock
+pytubefix
+python-dateutil
+python-dotenv
+yt-dlp

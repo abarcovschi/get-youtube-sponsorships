@@ -21,7 +21,22 @@ from pytubefix import YouTube
 from dateutil.parser import isoparse
 from typing import List, Tuple, Union
 from datetime import datetime, timezone
+import yt_dlp
 
+
+def get_stream_url(video_url):
+    ydl_opts = {
+        'format': 'best',
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'cookiefile': 'youtube_cookies.txt',
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(video_url, download=False)
+        return info['url']
+    
 
 def get_or_create_event_loop():
     try:
@@ -117,8 +132,10 @@ def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float])
         the temporarily saved path to wav file containing the sponsorship segment.
     """
 
-    yt = YouTube(link) # pytube
-    stream_url = yt.streams.all()[0].url  # Get the URL of the video stream.
+    # yt = YouTube(link) # pytube
+    # stream_url1 = yt.streams.all()[0].url  # Get the URL of the video stream.
+    # Example usage
+    stream_url2 = get_stream_url(link)
 
     # Probe the audio streams (use it in case you need information like sample rate):
     #probe = ffmpeg.probe(stream_url)
@@ -130,7 +147,7 @@ def get_sponsorship_audio(link: str, sponsorship_timeframe: Tuple[float, float])
     # The audio is transcoded to PCM codec in WAC container.
     audio, err = (
         ffmpeg
-        .input(stream_url)
+        .input(stream_url2)
         # ffmpeg 'atrim' filter extracting the sponsorship segment of audio and keeping it in memory.
         .audio.filter("atrim", start=sponsorship_timeframe[0], end=sponsorship_timeframe[1])
         .output("pipe:", format='wav', acodec='pcm_s16le')  # Select WAV output format, and pcm_s16le auidio codec. My add ar=sample_rate
