@@ -1,4 +1,4 @@
-# get-youtube-sonsorships
+# Get YouTube Sponsorships
 Get information on the paid sponsorship deals of YouTubers in their latest videos.
 
 ## Flowcharts of algorithms
@@ -13,4 +13,14 @@ Get information on the paid sponsorship deals of YouTubers in their latest video
 
 ## Flask web application screenshots
 
-![](images/"Screenshot 2025-05-02 102712.png")
+![By Channel main page](images/1.png "By Channel main page")
+
+![By Channel loading](images/2.png "By Channel loading")
+
+![By Channel results](images/3.png "By Channel results")
+
+![Single Video main page](images/4.png "Single Video main page")
+
+![Single Video loading](images/5.png "Single Video loading")
+
+![Single Video results](images/6.png "Single Video results")
