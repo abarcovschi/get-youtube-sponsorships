@@ -30,12 +30,11 @@ def get_stream_url(video_url):
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'cookiefile': 'youtube_cookies.txt',
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=False)
-        return info['url']
+        return info['url']  
     
 
 def get_or_create_event_loop():

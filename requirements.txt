@@ -10,3 +10,4 @@ pytubefix
 python-dateutil
 python-dotenv
 yt-dlp
+google-auth-oauthlib
